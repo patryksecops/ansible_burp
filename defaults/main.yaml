@@ -1,1 +1,18 @@
+############################ S3 defaults
+aws_region: "us-east-2"
+s3_bucket: "sap-dev-security-binaries"
 
+############################ Extensions details 
+extension_filename:
+  - "3123d5b5f25c4128894d97ea1acc4976.bapp" # Active Scan++ v. 2.0.5 downloaded from https://portswigger.net/bappstore/3123d5b5f25c4128894d97ea1acc4976
+s3_object: "media/burpsuite/{{ extension_filename }}"
+dest_path: "/tmp/{{ extension_filename }}"
+
+############################ New user data for API user creation
+new_user_data:                                          #Data for the new API user to be created        
+  name: "concourse-user"
+  username: "concourse-user"
+  email: "patryk.pilarski@sap.com"
+  enabled: true
+  api_user: true
+  group_ids: [ "-1" ]
