@@ -12,7 +12,7 @@ dest_path: "/tmp/{{ extension_filename }}"
 new_user_data:                                          #Data for the new API user to be created        
   name: "concourse-user"
   username: "concourse-user"
-  email: "patryk.pilarski@sap.com"
+  email: "x@x.com"
   enabled: true
   api_user: true
   group_ids: [ "-1" ]
