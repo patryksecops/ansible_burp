@@ -1,0 +1,34 @@
+# With DAST API it is not possible to get API token of existing user - token is generated only on user creation.
+# Therefore, we need to delete the user to ensure that the next run of the playbook
+
+- name: Get all users to check if concourse-user exists
+  ansible.builtin.uri:
+    url: "{{ server_url }}/api-internal/users/" 
+    method: GET
+    headers:
+      Authorization: "{{ dast_token }}"
+    return_content: yes
+    validate_certs: no
+  register: list_users_response
+  no_log: true
+
+- name: Search for concourse-user in user list
+  set_fact:
+    existing_user: >-
+      {{ (list_users_response.json.users | selectattr('username', 'equalto', new_user_data.name) | list | first) | default({}) }}
+
+- name: Set user_id_to_delete from existing user
+  set_fact:
+    user_id_to_delete: "{{ existing_user.id }}"
+  when: existing_user is defined and existing_user is not none and 'id' in existing_user
+
+- name: Delete user (optional)
+  uri:
+    url: "{{ server_url }}/api-internal/users/{{ user_id_to_delete }}/"
+    method: DELETE
+    headers:
+      Authorization: "{{ dast_token }}"
+    status_code: 204
+    validate_certs: no
+  register: delete_response
+  when: user_id_to_delete is defined

@@ -1,0 +1,40 @@
+---
+# Synopsis: Interact with Burp Suite DAST API to create new automation user and use it to manage additional extensions
+# Inputs:
+#   - server_url: URL of the Burp Suite DAST server
+#   - user: Username for the DAST admin user
+#   - pass: Password for the DAST admin user
+#   - AWS_ACCSESS_KEY_ID: AWS access key ID for S3 operations
+#   - AWS_SECRET_ACCESS_KEY: AWS secret access key for S3 operations
+# Outputs:
+#   - none
+
+- name: Run entire workflow 
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - defaults/main.yaml
+  vars:
+############################ Burp login variables
+    dast_login_url: "{{ server_url }}/api-internal/login"   #API endpoint for initial login 
+    dast_username: "{{ user }}"                             #Burp Admin username from Vault
+    dast_password: "{{ pass }}"                             #Burp Admin pass from Vault
+
+  ############################ AWS & S3 variables 
+    aws_access_key_id: "{{ AWS_ACCESS_KEY_ID }}"
+    aws_secret_access_key: "{{ AWS_SECRET_ACCESS_KEY }}"
+    
+  tasks:
+    - name: Authenticate once
+      include_tasks: admin_authentication.yaml
+
+    - name: Create_user
+      include_tasks: create_user.yaml
+
+    - name: Manage extensions
+      include_tasks: manage_extensions.yaml
+
+    - name: Delete user
+      include_tasks: delete_user.yaml
+
+

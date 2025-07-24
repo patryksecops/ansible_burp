@@ -1,0 +1,58 @@
+---
+- name: Authenticate with DAST server
+  hosts: localhost
+  gather_facts: no
+  vars:
+    dast_login_url: "{{ server_url }}/api-internal/login"   #API endpoint for initial login 
+    dast_username: "{{ user }}"                             #Burp Admin username from Vault
+    dast_password: "{{ pass }}"                             #Burp Admin pass from Vault
+  
+    new_user_data:                                          #Data for the new API user to be created        
+      name: "concourse-user"
+      username: "concourse-user"
+      email: "patryk.pilarski@sap.com"
+      enabled: true
+      api_user: true
+      group_ids: [ "-1" ]
+
+  tasks:
+    - name: Send login request to DAST API                  #Login as DAST Admin user
+      ansible.builtin.uri:
+        url: "{{ server_url }}/api-internal/login"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          username: "{{ dast_username }}"
+          password: "{{ dast_password }}"
+        validate_certs: no  # To be set to yes later to use internal CA cert
+        return_content: yes
+      register: login_response
+      no_log: true  # Hide credentials in logs
+
+    - name: Extract DAST admin token                      #Extract token from login response
+      set_fact:
+        dast_token: "{{ login_response.json.token }}"
+
+    - name: Get all users to check if concourse-user exists
+      ansible.builtin.uri:
+        url: "{{ server_url }}/api-internal/users/" 
+        method: GET
+        headers:
+          Authorization: "{{ dast_token }}"
+        return_content: yes
+        validate_certs: no
+      register: list_users_response
+      no_log: true
+
+    - name: Search for concourse-user in user list
+      set_fact:
+        existing_user: >-
+          {{ (list_users_response.json.users | selectattr('username', 'equalto', new_user_data.name) | list | first) | default({}) }}
+
+    - name: Show found user (if any)
+      debug:
+        var: existing_user
+      when: existing_user is defined
+    

@@ -1,0 +1,17 @@
+- name: Send login request to DAST API                  #Login as DAST Admin user
+  ansible.builtin.uri:
+    url: "{{ server_url }}/api-internal/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      username: "{{ dast_username }}"
+      password: "{{ dast_password }}"
+    validate_certs: no  # To be set to yes later to use internal CA cert
+    return_content: yes
+  register: login_response
+  no_log: true  # Hide credentials in log
+- name: Extract DAST admin token                      #Extract token from login response
+  set_fact:
+    dast_token: "{{ login_response.json.token }}"

@@ -1,0 +1,210 @@
+---
+- name: Authenticate with DAST server
+  hosts: localhost
+  gather_facts: no
+  vars:
+    aws_access_key_id: "{{ AWS_ACCSESS_KEY_ID }}"
+    aws_secret_access_key: "{{ AWS_SECRET_ACCESS_KEY }}"
+    aws_region: "us-east-2"
+    dast_login_url: "{{ server_url }}/api-internal/login"  # Replace with your DAST server URL
+    dast_username: "{{ user }}"
+    dast_password: "{{ pass }}"
+    s3_bucket: "sap-dev-security-binaries"
+    s3_object: "media/burpsuite/3123d5b5f25c4128894d97ea1acc4976.bapp"
+    dest_path: "/tmp/3123d5b5f25c4128894d97ea1acc4976.bapp"
+    extension_filename: "3123d5b5f25c4128894d97ea1acc4976.bapp"
+
+
+    new_user_name: "concourse-user"
+    new_user_url: "{{ server_url }}/api-internal/users/"
+    new_user_email: "patryk.pilarski@sap.com"
+    new_user_data:
+      name: "{{ new_user_name }}"
+      username: "{{ new_user_name }}"
+      email: "{{ new_user_email }}"
+      enabled: true
+      api_user: true
+      group_ids: [ "-1" ]
+
+  tasks:
+    - name: Send login request to DAST API
+      ansible.builtin.uri:
+        url: "{{ dast_login_url }}"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          username: "{{ dast_username }}"
+          password: "{{ dast_password }}"
+        validate_certs: no  # Set to 'yes' if the server uses a valid SSL cert
+        return_content: yes
+      register: login_response
+      no_log: true  # Hide credentials in logs
+
+    - name: Extract DAST token
+      set_fact:
+        dast_token: "{{ login_response.json.token }}"
+
+    - name: Get all users to check if concourse-user exists
+      ansible.builtin.uri:
+        url: "{{ new_user_url }}"
+        method: GET
+        headers:
+          Authorization: "{{ dast_token }}"
+        return_content: yes
+        validate_certs: no
+      register: list_users_response
+      no_log: true
+
+    - name: Search for concourse-user in user list
+      set_fact:
+        existing_user: >-
+          {{ (list_users_response.json.users | selectattr('username', 'equalto', new_user_name) | list | first) | default({}) }}
+
+    - name: Show found user (if any)
+      debug:
+        var: existing_user
+      when: existing_user is defined
+
+    - name: Create user if it doesn't exist
+      ansible.builtin.uri:
+        url: "{{ new_user_url }}"
+        method: POST
+        headers:
+          Authorization: "{{ dast_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ new_user_data }}"
+        validate_certs: no
+        status_code: 201
+      register: create_user_response
+      when: existing_user is not defined or existing_user is none or 'id' not in existing_user
+      no_log: true
+      
+    - name: Extract Concourse token
+      set_fact:
+        concourse_token: "{{ create_user_response.json.secret }}"
+      when: create_user_response is defined and create_user_response is not skipped
+
+    - name: Query Burp GraphQL API for installed extensions
+      ansible.builtin.uri:
+        url: "{{ server_url }}/graphql/v1"
+        method: POST
+        headers:
+          Authorization: "{{ dast_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          query: |
+            query {
+              extensions {
+                id
+                name
+              }
+            }
+        return_content: yes
+        validate_certs: no
+      register: graphql_extensions_response
+
+    - name: Check if Active Scan++ is installed
+      set_fact:
+        active_scan_installed: >-
+          {{ graphql_extensions_response.json.data.extensions
+             | selectattr('name', 'search', 'Active Scan')
+             | list
+             | length > 0 }}
+
+    - name: Download file from S3
+      shell: |
+        aws s3 cp "s3://{{ s3_bucket }}/{{ s3_object }}" "{{ dest_path }}"
+      register: bapp_download
+      when: not active_scan_installed
+
+    - name: Read and encode .bapp file as base64
+      slurp:
+        src: "{{ dest_path }}"
+      register: bapp_base64
+      when: not active_scan_installed 
+
+
+    - name: Upload Active Scan++ if not installed
+      uri:
+        url: "{{ server_url }}/graphql/v1"
+        method: POST
+        headers:
+          Authorization: "{{ concourse_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          query: |
+            mutation UploadBapp($input: UploadBappInput!) {
+              upload_bapp(input: $input) {
+                extension {
+                  id
+                  name
+                }
+              }
+            }
+          variables:
+            input:
+              extension_filename: "{{ extension_filename }}"
+              extension_file_as_base_64: "{{ bapp_base64.content }}"
+        return_content: yes
+        validate_certs: no
+      when: not active_scan_installed
+
+
+    #- name: Display installed extensions
+    #  debug:
+    #   msg: "{{ graphql_extensions_response.json.data.extensions }}"
+
+    - name: Get all users to check if concourse-user exists
+      ansible.builtin.uri:
+        url: "{{ new_user_url }}"
+        method: GET
+        headers:
+          Authorization: "{{ dast_token }}"
+        return_content: yes
+        validate_certs: no
+      register: list_users_response
+      no_log: true
+
+    - name: Search for concourse-user in user list
+      set_fact:
+        existing_user: >-
+          {{ (list_users_response.json.users | selectattr('username', 'equalto', new_user_name) | list | first) | default({}) }}
+
+    - name: Show found user (if any)
+      debug:
+        var: existing_user
+      when: existing_user is defined
+
+    - name: Set user_id_to_delete from existing user
+      set_fact:
+        user_id_to_delete: "{{ existing_user.id }}"
+      when: existing_user is defined and existing_user is not none and 'id' in existing_user
+
+    - name: Set user_id_to_delete from created user
+      set_fact:
+        user_id_to_delete: "{{ create_user_response.json.id }}"
+      when: existing_user is not defined or existing_user is none
+
+
+    - name: Delete user (optional)
+      uri:
+        url: "{{ server_url }}/api-internal/users/{{ user_id_to_delete }}/"
+        method: DELETE
+        headers:
+          Authorization: "{{ dast_token }}"
+        status_code: 204
+        validate_certs: no
+      register: delete_response
+      when: user_id_to_delete is defined
+
+    - name: Confirm user deletion
+      debug:
+        msg: "User {{ new_user_name }} deleted successfully."
+      when: delete_response is defined and delete_response.status is defined and delete_response.status == 204
+
+

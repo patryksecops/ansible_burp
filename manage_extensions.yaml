@@ -1,0 +1,79 @@
+# Playbook to manage Burp Suite extensions using GraphQL API
+
+- name: Query Burp GraphQL API for installed extensions
+  ansible.builtin.uri:
+    url: "{{ server_url }}/graphql/v1"
+    method: POST
+    headers:
+      Authorization: "{{ dast_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      query: |
+        query {
+          extensions {
+            id
+            name
+          }
+        }
+    return_content: yes
+    validate_certs: no
+  register: graphql_extensions_response
+
+# Below task has to be extended in the future if new extensions are added
+# For now, we only check if Active Scan++ is installed
+- name: Check if Active Scan++ is installed
+  set_fact:
+    active_scan_installed: >-
+      {{ graphql_extensions_response.json.data.extensions
+         | selectattr('name', 'search', 'Active Scan')
+         | list
+         | length > 0 }}
+
+- name: Download file from S3
+  shell: |
+    aws s3 cp "s3://{{ s3_bucket }}/media/burpsuite/{{ item }}" "/tmp/{{ item }}"
+  loop: "{{ extension_filename }}"
+  register: bapp_download
+  when: not active_scan_installed
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+    AWS_DEFAULT_REGION: "{{ aws_region }}"
+  
+- name: Read and encode .bapp file as base64
+  slurp:
+    src: "/tmp/{{ item }}"
+  loop: "{{ extension_filename }}"
+  register: bapp_base64
+  when: not active_scan_installed
+
+- name: Upload Active Scan++ if not installed
+  uri:
+    url: "{{ server_url }}/graphql/v1"
+    method: POST
+    headers:
+      Authorization: "{{ concourse_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      query: |
+        mutation UploadBapp($input: UploadBappInput!) {
+          upload_bapp(input: $input) {
+            extension {
+              id
+              name
+            }
+          }
+        }
+      variables:
+        input:
+          extension_filename: "{{ item.0 }}"
+          extension_file_as_base_64: "{{ item.1.content }}"
+    return_content: yes
+    validate_certs: no
+  with_together:
+    - "{{ extension_filename }}"
+    - "{{ bapp_base64.results }}"
+  when: not active_scan_installed
+  no_log: true  # Hide long output 
